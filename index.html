@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>i Shadow 爱影 - 专属水印生成器</title>
+    <!-- 引入 EXIF 读取库 -->
+    <script src="https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js"></script>
+    <!-- 引入 html2canvas 导出库 -->
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    
+    <style>
+        :root {
+            --bg: #121212;
+            --panel: #1e1e1e;
+            --text: #e0e0e0;
+            --accent: #4a90e2;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* 左侧控制面板 */
+        .sidebar {
+            width: 320px;
+            background: var(--panel);
+            padding: 20px;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 10;
+        }
+        .sidebar h1 { font-size: 20px; margin: 0; font-weight: 600; letter-spacing: 1px;}
+        .sidebar p { font-size: 12px; color: #888; margin-top: -5px; }
+        
+        .form-group { display: flex; flex-direction: column; gap: 5px; margin-top: 10px;}
+        label { font-size: 13px; color: #aaa; }
+        select, input[type="file"], button {
+            background: #2a2a2a;
+            color: white;
+            border: 1px solid #444;
+            padding: 10px;
+            border-radius: 6px;
+            outline: none;
+            cursor: pointer;
+        }
+        button.primary {
+            background: var(--accent);
+            border: none;
+            font-weight: bold;
+            margin-top: auto;
+            padding: 12px;
+            transition: 0.2s;
+        }
+        button.primary:hover { background: #357abd; }
+        
+        /* 右侧预览区 */
+        .preview-area {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            background: #0a0a0a; /* 背景更暗，凸显照片 */
+            overflow: auto;
+        }
+        
+        /* 核心容器：用来包裹图片和水印 */
+        .photo-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            background: #000;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+            max-width: 100%;
+            max-height: 100%;
+            transition: all 0.3s ease;
+        }
+        
+        .photo-container img {
+            display: block;
+            max-width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+        }
+
+        /* ---- 水印样式区 ---- */
+
+        /* 1. 底部留白款 (类似拍立得，但更现代) */
+        .style-bottom-border {
+            padding: 0 0 60px 0;
+            background: #fff;
+        }
+        .style-bottom-border .watermark {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background: #fff;
+            color: #222;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }
+
+        /* 2. 一圈白边款 */
+        .style-white-frame {
+            padding: 40px;
+            background: #fff;
+        }
+        .style-white-frame .watermark {
+            position: absolute;
+            bottom: 15px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            color: #333;
+        }
+
+        /* 3. 一圈毛玻璃款 */
+        .style-glass-frame {
+            padding: 25px;
+            background: rgba(30, 30, 30, 0.6);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .style-glass-frame .watermark {
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #fff;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .style-glass-frame .brand {
+            color: #f39c12; /* 品牌高亮色 */
+            font-weight: bold;
+        }
+
+        /* 4. 经典居中胶囊款 (你原图那个) */
+        .style-pill {
+            /* 无背景留白，直接盖在图上 */
+        }
+        .style-pill .watermark {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(20, 20, 20, 0.5);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 30px;
+            padding: 8px 25px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            color: #fff;
+            white-space: nowrap;
+            font-size: 13px;
+        }
+        
+        /* 水印文字通用样式 */
+        .wm-brand { font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+        .wm-sep { opacity: 0.3; margin: 0 5px; }
+        .wm-text { font-family: monospace; font-size: 0.95em; opacity: 0.9; }
+
+    </style>
+</head>
+<body>
+
+    <!-- 左侧控制台 -->
+    <div class="sidebar">
+        <div>
+            <h1>i Shadow 爱影</h1>
+            <p>无需上传云端，本地极速生成</p>
+        </div>
+        
+        <div class="form-group">
+            <label>1. 选择照片</label>
+            <input type="file" id="uploadInput" accept="image/*">
+        </div>
+
+        <div class="form-group">
+            <label>2. 选择排版样式</label>
+            <select id="wmStyle">
+                <option value="style-bottom-border">底部留白（摄影集风格）</option>
+                <option value="style-white-frame">一圈白边（画廊装裱风）</option>
+                <option value="style-glass-frame">一圈毛玻璃（现代高级风）</option>
+                <option value="style-pill">悬浮胶囊（原图风格）</option>
+            </select>
+        </div>
+
+        <button class="primary" id="exportBtn">下载带水印图片</button>
+    </div>
+
+    <!-- 右侧工作区 -->
+    <div class="preview-area" id="previewArea">
+        <div id="emptyHint" style="color:#666;">请上传一张照片开始</div>
+        
+        <!-- 动态生成的结构 -->
+        <div class="photo-container" id="photoContainer" style="display: none;">
+            <img id="mainImage" src="" alt="预览图">
+            
+            <!-- 水印层 -->
+            <div class="watermark" id="watermark">
+                <span class="wm-brand" id="wmBrand">BRAND</span>
+                <span class="wm-sep">|</span>
+                <span id="wmDevice">未知机型</span>
+                <span class="wm-sep">|</span>
+                <span id="wmLens">未知镜头</span>
+                <span class="wm-sep">|</span>
+                <span class="wm-text" id="wmParams">参数未知</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const uploadInput = document.getElementById('uploadInput');
+        const mainImage = document.getElementById('mainImage');
+        const photoContainer = document.getElementById('photoContainer');
+        const emptyHint = document.getElementById('emptyHint');
+        const wmStyle = document.getElementById('wmStyle');
+        const watermark = document.getElementById('watermark');
+        const exportBtn = document.getElementById('exportBtn');
+
+        // 文本节点
+        const wmBrand = document.getElementById('wmBrand');
+        const wmDevice = document.getElementById('wmDevice');
+        const wmLens = document.getElementById('wmLens');
+        const wmParams = document.getElementById('wmParams');
+
+        let currentFile = null;
+
+        // 1. 读取图片与 EXIF
+        uploadInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            currentFile = file;
+
+            // 显示图片
+            mainImage.src = URL.createObjectURL(file);
+            emptyHint.style.display = 'none';
+            photoContainer.style.display = 'flex';
+
+            // 默认值
+            let brand = "未知品牌";
+            let device = "未知机型";
+            let lens = "未知镜头";
+            let params = "参数未知";
+
+            try {
+                const output = await exifr.parse(file, ['Make', 'Model', 'LensModel', 'FocalLength', 'FNumber', 'ExposureTime', 'ISO']);
+                if (output) {
+                    // 品牌与机型
+                    if (output.Make) brand = output.Make;
+                    if (output.Model) device = output.Model;
+                    
+                    // 镜头 (有些相机读不到镜头型号)
+                    if (output.LensModel) {
+                        lens = output.LensModel;
+                    } else if (output.FocalLength) {
+                        lens = `${Math.round(output.FocalLength)}mm`;
+                    }
+
+                    // 参数拼装
+                    let pArray = [];
+                    if (output.FNumber) pArray.push(`f/${output.FNumber}`);
+                    if (output.ExposureTime) {
+                        let shutter = output.ExposureTime;
+                        pArray.push(shutter < 1 ? `1/${Math.round(1/shutter)}s` : `${shutter}s`);
+                    }
+                    if (output.ISO) pArray.push(`ISO ${output.ISO}`);
+                    
+                    if (pArray.length > 0) params = pArray.join(' · ');
+                }
+            } catch (error) {
+                console.log("无 EXIF 数据");
+            }
+
+            // 更新 UI
+            wmBrand.innerText = brand;
+            wmDevice.innerText = device;
+            wmLens.innerText = lens;
+            wmParams.innerText = params;
+        });
+
+        // 2. 切换样式
+        wmStyle.addEventListener('change', (e) => {
+            // 移除所有样式类
+            photoContainer.className = 'photo-container';
+            // 添加选中的类
+            photoContainer.classList.add(e.target.value);
+        });
+
+        // 3. 导出图片 (高阶处理，保证画质)
+        exportBtn.addEventListener('click', () => {
+            if (!currentFile) return alert('请先上传照片！');
+            
+            // 隐藏提示框
+            emptyHint.style.display = 'none';
+
+            // 使用 html2canvas 截图
+            html2canvas(photoContainer, {
+                useCORS: true,
+                scale: 2, // 2倍分辨率导出，防止模糊
+                backgroundColor: null // 保持透明
+            }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = `iShadow_${Date.now()}.jpg`;
+                link.href = canvas.toDataURL('image/jpeg', 0.95);
+                link.click();
+            });
+        });
+    </script>
+</body>
+</html>
